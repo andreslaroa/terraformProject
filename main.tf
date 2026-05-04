@@ -4,50 +4,79 @@
 # Terraform configuration
 
 provider "aws" {
-  region = "us-east-1"
+  region = local.common_tags.Region
 }
 
-module "vpc" {
+module "aws_vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "6.6.1"
 
-  name = var.vpc_name
+  name = local.common_tags.Project
   cidr = var.vpc_cidr
-
-  azs             = var.vpc_azs
-  private_subnets = var.vpc_private_subnets
   
-  public_subnets = var.vpc_public_subnets
+  azs = ["${var.aws_region}a"]
+
+  private_subnets = var.vpc_private_subnets
+
+  public_subnets     = var.vpc_public_subnets
   enable_nat_gateway = var.vpc_enable_nat_gateway
 
-  tags = var.vpc_tags
+  tags = local.common_tags
 
 }
 
+module "aws_security_group" {
+  source  = "terraform-aws-modules/security-group/aws"
+  version = "5.3.1"
+
+  name   = "${local.prefix}-sg"
+  vpc_id = module.aws_vpc.vpc_id
+
+  ingress_with_cidr_blocks = [
+    {
+      from_port   = 0
+      to_port     = 80
+      protocol    = "tcp"
+      description = "http"
+      cidr_blocks = "10.10.0.0/16"
+    },
+    {
+      from_port   = 0
+      to_port     = 22
+      protocol    = "tcp"
+      description = "ssh"
+      cidr_blocks = "10.10.0.0/16"
+    }
+  ]
+
+
+}
+
+
 module "ec2_instances" {
-  source  = "terraform-aws-modules/ec2-instance/aws"
+  source = "terraform-aws-modules/ec2-instance/aws"
 
-  name = "single-instance-terraform"
+  name = local.common_tags.Project
 
-  key_name      = "events-app-key"
+  key_name = var.ec2_keyname
 
-  tags = {
-    Terraform   = "true"
-    Environment = "dev"
-  }
+  tags = local.common_tags
+
   ami                    = "ami-0c7217cdde317cfec"
   instance_type          = "t3.micro"
-  vpc_security_group_ids = ["sg-00aa1d4c9cbb69dbf"]
-  subnet_id              = "subnet-0f4cfcfd497e41851"
+  vpc_security_group_ids = [module.aws_security_group.security_group_id]
+  subnet_id              = module.aws_vpc.private_subnets[0]
+}
+
+resource "aws_ec2_instance_state" "test" {
+  instance_id = module.ec2_instances.id
+  state       = "stopped"
 }
 
 module "s3-bucket" {
   source = "terraform-aws-modules/s3-bucket/aws"
 
-  bucket = "robin-test-may-01-2026"
+  bucket = "${var.project_name}-${var.environment}-round-robin"
 
-  tags = {
-    Terraform   = "true"
-    Environment = "dev"
-  }
+  tags = local.common_tags
 }
